@@ -259,6 +259,14 @@ M.exec = function(options)
         opts.replace = true
     end
 
+    if type(opts.prompt) == "table" then
+        opts.prompt = opts.prompt[M.language]
+        if not opts.prompt then
+            print("No prompt defined for language '" .. M.language .. "'.")
+            return
+        end
+    end
+
     if type(opts.init) == "function" then
         opts.init(opts)
     end
