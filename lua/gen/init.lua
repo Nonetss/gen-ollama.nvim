@@ -1,86 +1,13 @@
+local reset = require("gen.utils.reset")
+local close_window = require("gen.window.close")
+local create_window = require("gen.window.create")
 local prompts = require("gen.prompts")
 local M = {}
+local default_options = require("gen.utils.default_options")
 
 local globals = {}
-local function reset(keep_selection)
-    if not keep_selection then
-        globals.curr_buffer = nil
-        globals.start_pos = nil
-        globals.end_pos = nil
-    end
-    if globals.job_id then
-        vim.fn.jobstop(globals.job_id)
-        globals.job_id = nil
-    end
-    globals.result_buffer = nil
-    globals.float_win = nil
-    globals.result_string = ""
-    globals.context = nil
-    globals.context_buffer = nil
-    if globals.temp_filename then
-        os.remove(globals.temp_filename)
-        globals.temp_filename = nil
-    end
-end
 reset()
 
-local function trim_table(tbl)
-    local function is_whitespace(str)
-        return str:match("^%s*$") ~= nil
-    end
-
-    while #tbl > 0 and (tbl[1] == "" or is_whitespace(tbl[1])) do
-        table.remove(tbl, 1)
-    end
-
-    while #tbl > 0 and (tbl[#tbl] == "" or is_whitespace(tbl[#tbl])) do
-        table.remove(tbl, #tbl)
-    end
-
-    return tbl
-end
-
-local default_options = {
-    model = "mistral",
-    host = "localhost",
-    port = "11434",
-    file = false,
-    debug = false,
-    language = "en",
-    body = { stream = true },
-    show_prompt = false,
-    show_model = false,
-    quit_map = "q",
-    accept_map = "<c-cr>",
-    retry_map = "<c-r>",
-    hidden = false,
-    command = function(options)
-        return "curl -q --silent --no-buffer -X POST http://"
-            .. options.host
-            .. ":"
-            .. options.port
-            .. "/api/chat -d $body"
-    end,
-    json_response = true,
-    display_mode = "float",
-    no_auto_close = false,
-    init = function()
-        pcall(io.popen, "ollama serve > /dev/null 2>&1 &")
-    end,
-    list_models = function(options)
-        local response = vim.fn.systemlist(
-            "curl -q --silent --no-buffer http://" .. options.host .. ":" .. options.port .. "/api/tags"
-        )
-        local list = vim.fn.json_decode(response)
-        local models = {}
-        for key, _ in pairs(list.models) do
-            table.insert(models, list.models[key].name)
-        end
-        table.sort(models)
-        return models
-    end,
-    result_filetype = "markdown",
-}
 for k, v in pairs(default_options) do
     M[k] = v
 end
@@ -89,80 +16,6 @@ M.setup = function(opts)
     for k, v in pairs(opts) do
         M[k] = v
     end
-end
-
-local function close_window(opts)
-    local lines = {}
-    if opts.extract then
-        local extracted = globals.result_string:match(opts.extract)
-        if not extracted then
-            if not opts.no_auto_close then
-                vim.api.nvim_win_hide(globals.float_win)
-                if globals.result_buffer ~= nil then
-                    vim.api.nvim_buf_delete(globals.result_buffer, { force = true })
-                end
-                reset()
-            end
-            return
-        end
-        lines = vim.split(extracted, "\n", { trimempty = true })
-    else
-        lines = vim.split(globals.result_string, "\n", { trimempty = true })
-    end
-    lines = trim_table(lines)
-    vim.api.nvim_buf_set_text(
-        globals.curr_buffer,
-        globals.start_pos[2] - 1,
-        globals.start_pos[3] - 1,
-        globals.end_pos[2] - 1,
-        globals.end_pos[3] > globals.start_pos[3] and globals.end_pos[3] or globals.end_pos[3] - 1,
-        lines
-    )
-    -- in case another replacement happens
-    globals.end_pos[2] = globals.start_pos[2] + #lines - 1
-    globals.end_pos[3] = string.len(lines[#lines])
-    if not opts.no_auto_close then
-        if globals.float_win ~= nil then
-            vim.api.nvim_win_hide(globals.float_win)
-        end
-        if globals.result_buffer ~= nil then
-            vim.api.nvim_buf_delete(globals.result_buffer, { force = true })
-        end
-        reset()
-    end
-end
-
-local function get_window_options(opts)
-    local cursor = vim.api.nvim_win_get_cursor(0)
-    local new_win_width = vim.api.nvim_win_get_width(0)
-    local win_height = vim.api.nvim_win_get_height(0)
-
-    local middle_row = win_height / 2
-
-    local new_win_height = math.floor(win_height / 2)
-    local new_win_row
-    if cursor[1] <= middle_row then
-        new_win_row = 5
-    else
-        new_win_row = -5 - new_win_height
-    end
-
-    local result = {
-        relative = "cursor",
-        width = new_win_width,
-        height = new_win_height,
-        row = new_win_row,
-        col = 0,
-        style = "minimal",
-        border = "rounded",
-    }
-
-    local version = vim.version()
-    if version.major > 0 or version.minor >= 10 then
-        result.hide = opts.hidden
-    end
-
-    return result
 end
 
 local function write_to_buffer(lines)
@@ -199,56 +52,6 @@ local function write_to_buffer(lines)
     end
 
     vim.api.nvim_set_option_value("modifiable", false, { buf = globals.result_buffer })
-end
-
-local function create_window(cmd, opts)
-    local function setup_window()
-        globals.result_buffer = vim.fn.bufnr("%")
-        globals.float_win = vim.fn.win_getid()
-        vim.api.nvim_set_option_value("filetype", opts.result_filetype, { buf = globals.result_buffer })
-        vim.api.nvim_set_option_value("buftype", "nofile", { buf = globals.result_buffer })
-        vim.api.nvim_set_option_value("wrap", true, { win = globals.float_win })
-        vim.api.nvim_set_option_value("linebreak", true, { win = globals.float_win })
-    end
-
-    local display_mode = opts.display_mode or M.display_mode
-    if display_mode == "float" then
-        if globals.result_buffer then
-            vim.api.nvim_buf_delete(globals.result_buffer, { force = true })
-        end
-        local win_opts = vim.tbl_deep_extend("force", get_window_options(opts), opts.win_config)
-        globals.result_buffer = vim.api.nvim_create_buf(false, true)
-        globals.float_win = vim.api.nvim_open_win(globals.result_buffer, true, win_opts)
-        setup_window()
-    elseif display_mode == "horizontal-split" then
-        vim.cmd("split gen.nvim")
-        setup_window()
-    else
-        vim.cmd("vnew gen.nvim")
-        setup_window()
-    end
-    vim.keymap.set("n", "<esc>", function()
-        if globals.job_id then
-            vim.fn.jobstop(globals.job_id)
-        end
-    end, { buffer = globals.result_buffer })
-    vim.keymap.set("n", M.quit_map, "<cmd>quit<cr>", { buffer = globals.result_buffer })
-    vim.keymap.set("n", M.accept_map, function()
-        opts.replace = true
-        close_window(opts)
-    end, { buffer = globals.result_buffer })
-    vim.keymap.set("n", M.retry_map, function()
-        local buf = 0 -- Current buffer
-        if globals.job_id then
-            vim.fn.jobstop(globals.job_id)
-            globals.job_id = nil
-        end
-        vim.api.nvim_buf_set_option(buf, "modifiable", true)
-        vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
-        vim.api.nvim_buf_set_option(buf, "modifiable", false)
-        -- vim.api.nvim_win_close(0, true)
-        M.run_command(cmd, opts)
-    end, { buffer = globals.result_buffer })
 end
 
 M.exec = function(options)
