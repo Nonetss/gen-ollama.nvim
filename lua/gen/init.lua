@@ -295,9 +295,6 @@ vim.api.nvim_create_user_command("TGen", function(arg)
     -- Al igual que Gen, detectamos si hay selección
     local mode = (arg.range == 0) and "n" or "v"
 
-    -- Guardar modelo actual temporalmente
-    local old_model = M.config.model
-
     -- Cambiamos a nuestro modelo "pensante"
     M.config.model = M.config.thinking_model
 
@@ -308,7 +305,7 @@ vim.api.nvim_create_user_command("TGen", function(arg)
         if not prompt_obj then
             print("Invalid prompt '" .. prompt_key .. "'")
             -- restauramos el modelo original
-            M.config.model = old_model
+            M.config.model = M.config.thinking_model
             return
         end
 
@@ -318,7 +315,7 @@ vim.api.nvim_create_user_command("TGen", function(arg)
             if not prompt_text then
                 print("No prompt for language '" .. M.config.language .. "' in '" .. prompt_key .. "'.")
                 -- restauramos el modelo original
-                M.config.model = old_model
+                M.config.model = M.config.thinking_model
                 return
             end
         else
@@ -342,14 +339,14 @@ vim.api.nvim_create_user_command("TGen", function(arg)
             end,
         }, function(selected_prompt)
             if not selected_prompt then
-                M.config.model = old_model
+                M.config.model = M.config.thinking_model
                 return
             end
 
             local prompt_obj = prompts[selected_prompt]
             if not prompt_obj then
                 print("Prompt '" .. selected_prompt .. "' not found.")
-                M.config.model = old_model
+                M.config.model = M.config.thinking_model
                 return
             end
 
@@ -358,7 +355,7 @@ vim.api.nvim_create_user_command("TGen", function(arg)
                 prompt_text = prompt_obj.prompt[M.config.language]
                 if not prompt_text then
                     print("No prompt for language '" .. M.config.language .. "' in '" .. selected_prompt .. "'.")
-                    M.config.model = old_model
+                    M.config.model = M.config.thinking_model
                     return
                 end
             else
@@ -369,9 +366,6 @@ vim.api.nvim_create_user_command("TGen", function(arg)
             M.exec(final_opts)
         end)
     end
-
-    -- Finalmente, restauramos el modelo original para no afectar a "Gen"
-    M.config.model = old_model
 end, {
     range = true,
     nargs = "?",
