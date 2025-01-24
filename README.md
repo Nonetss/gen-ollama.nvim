@@ -31,9 +31,8 @@ Install with your favorite plugin manager, e.g. [lazy.nvim](https://github.com/f
 ```lua
 -- Minimal configuration
 { "Nonetss/gen-ollama.nvim" },
-```
 
-`````
+```
 
 ```lua
 -- Custom Parameters (with defaults)
@@ -127,7 +126,7 @@ require('gen').prompts['Fix_Code'] = {
   replace = true,
   extract = "```$filetype\n(.-)```"
 }
-`````
+````
 
 ### Prompt Properties
 
