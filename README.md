@@ -14,6 +14,7 @@ This is a **fork** of [David-Kunz/gen.nvim](https://github.com/David-Kunz/gen.nv
 
 - Added **multi-language support**, allowing you to set the language for prompts dynamically.
 - Refactored and modularized the codebase for improved maintainability and readability.
+- Introduced a new command, `:TGen`, which uses a special "thinking model" defined in the configuration.
 
 </div>
 
@@ -40,6 +41,7 @@ Install with your favorite plugin manager, e.g. [lazy.nvim](https://github.com/f
     "Nonetss/gen-ollama.nvim",
     opts = {
         model = "mistral", -- The default model to use.
+        thinking_model = "deepseek-r1", -- The "thinking model" used by the TGen command.
         language = "en", -- The default language for prompts (e.g., "en", "es").
         quit_map = "q", -- Set keymap to close the response window.
         retry_map = "<c-r>", -- Set keymap to re-send the current prompt.
@@ -80,7 +82,7 @@ require('gen').setup({
 
 Use the `Gen` command to generate text based on predefined and customizable prompts.
 
-Example keymaps:
+### Example keymaps
 
 ```lua
 vim.keymap.set({ 'n', 'v' }, '<leader>]', ':Gen<CR>')
@@ -101,6 +103,18 @@ After a conversation begins, the entire context is sent to the LLM. That allows 
 Once the window is closed, you start with a fresh conversation.
 
 For prompts that don't automatically replace the previously selected text (`replace = false`), you can replace the selected text with the generated output by pressing `<c-cr>`.
+
+### New Command: `:TGen`
+
+The `:TGen` command works similarly to `:Gen`, but uses the "thinking model" defined in the configuration (default: `deepseek-r1`). This command is ideal for tasks that require deeper analysis or specialized handling.
+
+Example keymaps:
+
+```lua
+vim.keymap.set({ 'n', 'v' }, '<leader>[', ':TGen<CR>')
+```
+
+### Selecting Models
 
 You can select a model from a list of all installed models with:
 
@@ -147,6 +161,7 @@ You can use the following properties per prompt:
 
 - **Multi-language prompts**: Add and switch between languages (e.g., English, Spanish).
 - **Refactored codebase**: The plugin's internals have been reorganized into smaller, more modular files for better maintainability.
+- **New command `:TGen`**: Use a specialized "thinking model" for deeper or more analytical tasks.
 
 ---
 
