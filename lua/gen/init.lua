@@ -1,241 +1,95 @@
-local reset = require("gen.utils.reset")
-local close_window = require("gen.window.close")
-local create_window = require("gen.window.create")
-local prompts = require("gen.prompts")
-local M = {}
-local default_options = require("gen.utils.default_options")
-
+-- lua/gen/init.lua
 local globals = require("gen.utils.globals")
-reset()
+local default_opts = require("gen.utils.default_options")
+local prepare_opts = require("gen.core.prepare_options")
+local selection = require("gen.core.selection")
+local command = require("gen.core.command")
+local writer = require("gen.core.writer")
+local response = require("gen.core.response")
+local create_window = require("gen.window.create")
+local close_window = require("gen.window.close")
+local reset = require("gen.utils.reset")
 
-for k, v in pairs(default_options) do
-    M[k] = v
+-- Módulo con prompts
+local prompts = require("gen.prompts")
+
+local M = {}
+
+-------------------------------------------------------------------
+-- CONFIGURACIÓN INICIAL
+-------------------------------------------------------------------
+-- Copia de las opciones por defecto
+M.config = {}
+for k, v in pairs(default_opts) do
+    M.config[k] = v
 end
 
-M.setup = function(opts)
-    for k, v in pairs(opts) do
-        M[k] = v
-    end
-end
-
-local function write_to_buffer(lines)
-    if not globals.result_buffer or not vim.api.nvim_buf_is_valid(globals.result_buffer) then
-        return
-    end
-
-    local all_lines = vim.api.nvim_buf_get_lines(globals.result_buffer, 0, -1, false)
-
-    local last_row = #all_lines
-    local last_row_content = all_lines[last_row]
-    local last_col = string.len(last_row_content)
-
-    local text = table.concat(lines or {}, "\n")
-
-    vim.api.nvim_set_option_value("modifiable", true, { buf = globals.result_buffer })
-    vim.api.nvim_buf_set_text(
-        globals.result_buffer,
-        last_row - 1,
-        last_col,
-        last_row - 1,
-        last_col,
-        vim.split(text, "\n")
-    )
-
-    if globals.float_win ~= nil and vim.api.nvim_win_is_valid(globals.float_win) then
-        local cursor_pos = vim.api.nvim_win_get_cursor(globals.float_win)
-
-        -- Move the cursor to the end of the new lines
-        if cursor_pos[1] == last_row then
-            local new_last_row = last_row + #lines - 1
-            vim.api.nvim_win_set_cursor(globals.float_win, { new_last_row, 0 })
+-- Para que el usuario pueda sobreescribir opciones
+function M.setup(opts)
+    if type(opts) == "table" then
+        for k, v in pairs(opts) do
+            M.config[k] = v
         end
     end
-
-    vim.api.nvim_set_option_value("modifiable", false, { buf = globals.result_buffer })
 end
 
-M.exec = function(options)
-    local opts = vim.tbl_deep_extend("force", M, options)
-    if opts.hidden then
-        -- the only reasonable thing to do if no output can be seen
-        opts.display_mode = "float" -- uses the `hide` option
-        opts.replace = true
-    end
+-------------------------------------------------------------------
+-- FUNCIÓN PRINCIPAL: EXEC
+-------------------------------------------------------------------
+function M.exec(user_options)
+    -- 1) Mezcla configuración por defecto con la recibida
+    local opts = prepare_opts(M.config, user_options)
 
-    if type(opts.prompt) == "table" then
-        opts.prompt = opts.prompt[M.language]
-        if not opts.prompt then
-            print("No prompt defined for language '" .. M.language .. "'.")
-            return
-        end
-    end
-
+    -- 2) Llamada a init si existe
     if type(opts.init) == "function" then
         opts.init(opts)
     end
 
-    if globals.result_buffer ~= vim.fn.winbufnr(0) then
-        globals.curr_buffer = vim.fn.winbufnr(0)
-        local mode = opts.mode or vim.fn.mode()
-        if mode == "v" or mode == "V" then
-            globals.start_pos = vim.fn.getpos("'<")
-            globals.end_pos = vim.fn.getpos("'>")
-            local max_col = vim.api.nvim_win_get_width(0)
-            if globals.end_pos[3] > max_col then
-                globals.end_pos[3] = vim.fn.col("'>") - 1
-            end -- in case of `V`, it would be maxcol instead
-        else
-            local cursor = vim.fn.getpos(".")
-            globals.start_pos = cursor
-            globals.end_pos = globals.start_pos
-        end
+    -- 3) Guardamos posición del cursor (o selección visual)
+    selection.store_selection(opts, globals)
+
+    -- 4) Obtenemos el contenido a enviar (todo buffer o selección)
+    local content = selection.get_content(globals)
+
+    -- 5) Construimos prompt y comando (curl) final
+    local cmd, prompt = command.prepare_prompt_and_command(opts, content, globals)
+    if not cmd then
+        return -- si no hay prompt válido, abortar
     end
 
-    local content
-    if globals.start_pos == globals.end_pos then
-        -- get text from whole buffer
-        content = table.concat(vim.api.nvim_buf_get_lines(globals.curr_buffer, 0, -1, false), "\n")
-    else
-        content = table.concat(
-            vim.api.nvim_buf_get_text(
-                globals.curr_buffer,
-                globals.start_pos[2] - 1,
-                globals.start_pos[3] - 1,
-                globals.end_pos[2] - 1,
-                globals.end_pos[3],
-                {}
-            ),
-            "\n"
-        )
-    end
-    local function substitute_placeholders(input)
-        if not input then
-            return input
-        end
-        local text = input
-        if string.find(text, "%$input") then
-            local answer = vim.fn.input("Prompt: ")
-            text = string.gsub(text, "%$input", answer)
-        end
-
-        text = string.gsub(text, '%$register_([%w*+:/"])', function(r_name)
-            local register = vim.fn.getreg(r_name)
-            if not register or register:match("^%s*$") then
-                error("Prompt uses $register_" .. rname .. " but register " .. rname .. " is empty")
-            end
-            return register
-        end)
-
-        if string.find(text, "%$register") then
-            local register = vim.fn.getreg('"')
-            if not register or register:match("^%s*$") then
-                error("Prompt uses $register but yank register is empty")
-            end
-
-            text = string.gsub(text, "%$register", register)
-        end
-
-        content = string.gsub(content, "%%", "%%%%")
-        text = string.gsub(text, "%$text", content)
-        text = string.gsub(text, "%$filetype", vim.bo.filetype)
-        return text
+    -- 6) Si hay contexto previo, añadimos separador en el buffer
+    if globals.context then
+        writer.write_to_buffer({ "", "", "---", "" }, globals)
     end
 
-    local prompt = opts.prompt
-
-    if type(prompt) == "function" then
-        prompt = prompt({ content = content, filetype = vim.bo.filetype })
-        if type(prompt) ~= "string" or string.len(prompt) == 0 then
-            return
-        end
-    end
-
-    prompt = substitute_placeholders(prompt)
-    opts.extract = substitute_placeholders(opts.extract)
-    prompt = string.gsub(prompt, "%%", "%%%%")
-
-    globals.result_string = ""
-
-    local cmd
-
-    opts.json = function(body, shellescape)
-        local json = vim.fn.json_encode(body)
-        if shellescape then
-            json = vim.fn.shellescape(json)
-            if vim.o.shell == "cmd.exe" then
-                json = string.gsub(json, '\\""', '\\\\\\"')
-            end
-        end
-        return json
-    end
-
-    opts.prompt = prompt
-
-    if type(opts.command) == "function" then
-        cmd = opts.command(opts)
-    else
-        cmd = M.command
-    end
-
-    if string.find(cmd, "%$prompt") then
-        local prompt_escaped = vim.fn.shellescape(prompt)
-        cmd = string.gsub(cmd, "%$prompt", prompt_escaped)
-    end
-    cmd = string.gsub(cmd, "%$model", opts.model)
-    if string.find(cmd, "%$body") then
-        local body = vim.tbl_extend("force", { model = opts.model, stream = true }, opts.body)
-        local messages = {}
-        if globals.context then
-            messages = globals.context
-        end
-        -- Add new prompt to the context
-        table.insert(messages, { role = "user", content = prompt })
-        body.messages = messages
-        if M.model_options ~= nil then -- llamacpp server - model options: eg. temperature, top_k, top_p
-            body = vim.tbl_extend("force", body, M.model_options)
-        end
-        if opts.model_options ~= nil then -- override model options from gen command (if exist)
-            body = vim.tbl_extend("force", body, opts.model_options)
-        end
-
-        if opts.file ~= nil then
-            local json = opts.json(body, false)
-            globals.temp_filename = os.tmpname()
-            local fhandle = io.open(globals.temp_filename, "w")
-            fhandle:write(json)
-            fhandle:close()
-            cmd = string.gsub(cmd, "%$body", "@" .. globals.temp_filename)
-        else
-            local json = opts.json(body, true)
-            cmd = string.gsub(cmd, "%$body", json)
-        end
-    end
-
-    if globals.context ~= nil then
-        write_to_buffer({ "", "", "---", "" })
-    end
-
+    -- 7) Llamamos a run_command
     M.run_command(cmd, opts)
 end
 
-M.run_command = function(cmd, opts)
-    -- vim.print('run_command', cmd, opts)
-    if globals.result_buffer == nil or globals.float_win == nil or not vim.api.nvim_win_is_valid(globals.float_win) then
+-------------------------------------------------------------------
+-- GESTIONAR EJECUCIÓN DE COMANDO
+-------------------------------------------------------------------
+function M.run_command(cmd, opts)
+    -- Si no hay ventana abierta o buffer para resultados, creamos uno
+    if (not globals.result_buffer) or not globals.float_win or (not vim.api.nvim_win_is_valid(globals.float_win)) then
         create_window(cmd, opts)
         if opts.show_model then
-            write_to_buffer({ "# Chat with " .. opts.model, "" })
+            writer.write_to_buffer({ "# Chat with " .. opts.model, "" }, globals)
         end
     end
+
+    -- Acumulador de datos parciales
     local partial_data = ""
+
     if opts.debug then
-        print(cmd)
+        print("Gen command:", cmd)
     end
 
+    -- Lanzamos el job (comando curl o lo que definas)
     globals.job_id = vim.fn.jobstart(cmd, {
-        -- stderr_buffered = opts.debug,
         on_stdout = function(_, data, _)
-            -- window was closed, so cancel the job
-            if not globals.float_win or not vim.api.nvim_win_is_valid(globals.float_win) then
+            -- Si han cerrado la ventana, matamos el job
+            if (not globals.float_win) or (not vim.api.nvim_win_is_valid(globals.float_win)) then
                 if globals.job_id then
                     vim.fn.jobstop(globals.job_id)
                 end
@@ -245,9 +99,13 @@ M.run_command = function(cmd, opts)
                 reset()
                 return
             end
+
+            -- Si debug, mostramos data
             if opts.debug then
                 vim.print("Response data: ", data)
             end
+
+            -- Acumula data en partial_data
             for _, line in ipairs(data) do
                 partial_data = partial_data .. line
                 if line:sub(-1) == "}" then
@@ -256,44 +114,42 @@ M.run_command = function(cmd, opts)
             end
 
             local lines = vim.split(partial_data, "\n", { trimempty = true })
-
             partial_data = table.remove(lines) or ""
 
             for _, line in ipairs(lines) do
-                Process_response(line, globals.job_id, opts.json_response)
+                response.process_response(line, opts.json_response)
             end
 
+            -- Si partial_data acaba en "}", procesarlo también
             if partial_data:sub(-1) == "}" then
-                Process_response(partial_data, globals.job_id, opts.json_response)
+                response.process_response(partial_data, opts.json_response)
                 partial_data = ""
             end
         end,
         on_stderr = function(_, data, _)
             if opts.debug then
-                -- window was closed, so cancel the job
                 if not globals.float_win or not vim.api.nvim_win_is_valid(globals.float_win) then
                     if globals.job_id then
                         vim.fn.jobstop(globals.job_id)
                     end
                     return
                 end
-
-                if data == nil or #data == 0 then
-                    return
+                if data and #data > 0 then
+                    globals.result_string = globals.result_string .. table.concat(data, "\n")
+                    local lines = vim.split(globals.result_string, "\n")
+                    writer.write_to_buffer(lines, globals)
                 end
-
-                globals.result_string = globals.result_string .. table.concat(data, "\n")
-                local lines = vim.split(globals.result_string, "\n")
-                write_to_buffer(lines)
             end
         end,
-        on_exit = function(_, b)
-            if b == 0 and opts.replace and globals.result_buffer then
+        on_exit = function(_, exit_code)
+            -- Si exit_code=0 y opts.replace, cerramos ventana e insertamos
+            if exit_code == 0 and opts.replace and globals.result_buffer then
                 close_window(opts)
             end
         end,
     })
 
+    -- Autocmd para cerrar job si cierran la ventana
     local group = vim.api.nvim_create_augroup("gen", { clear = true })
     vim.api.nvim_create_autocmd("WinClosed", {
         buffer = globals.result_buffer,
@@ -305,12 +161,13 @@ M.run_command = function(cmd, opts)
             if globals.result_buffer then
                 vim.api.nvim_buf_delete(globals.result_buffer, { force = true })
             end
-            reset(true) -- keep selection in case of subsequent retries
+            reset(true) -- keep_selection = true
         end,
     })
 
+    -- Mostrar prompt si se desea
     if opts.show_prompt then
-        local lines = vim.split(opts.prompt, "\n")
+        local lines = vim.split(opts.prompt or "", "\n", { trimempty = false })
         local short_prompt = {}
         for i = 1, #lines do
             lines[i] = "> " .. lines[i]
@@ -322,20 +179,23 @@ M.run_command = function(cmd, opts)
                 break
             end
         end
+
         local heading = "#"
-        if M.show_model then
+        if M.config.show_model then
             heading = "##"
         end
-        write_to_buffer({
+
+        writer.write_to_buffer({
             heading .. " Prompt:",
             "",
             table.concat(short_prompt, "\n"),
             "",
             "---",
             "",
-        })
+        }, globals)
     end
 
+    -- Cuando se “desatacha” (por si acaso)
     vim.api.nvim_buf_attach(globals.result_buffer, false, {
         on_detach = function()
             globals.result_buffer = nil
@@ -343,190 +203,100 @@ M.run_command = function(cmd, opts)
     })
 end
 
-M.win_config = {}
+-------------------------------------------------------------------
+-- COMANDO USER: Gen
+-------------------------------------------------------------------
+vim.api.nvim_create_user_command("Gen", function(arg)
+    local mode = (arg.range == 0) and "n" or "v"
 
-M.prompts = prompts
-local function select_prompt(cb)
+    if arg.args ~= "" then
+        -- Se pasa prompt como argumento
+        local prompt_key = arg.args
+        local prompt_obj = prompts[prompt_key]
+        if not prompt_obj then
+            print("Invalid prompt '" .. prompt_key .. "'")
+            return
+        end
+
+        local prompt_text
+        if type(prompt_obj.prompt) == "table" then
+            prompt_text = prompt_obj.prompt[M.config.language]
+            if not prompt_text then
+                print("No prompt for language '" .. M.config.language .. "' in '" .. prompt_key .. "'.")
+                return
+            end
+        else
+            prompt_text = prompt_obj.prompt
+        end
+
+        -- Unir opciones
+        local final_opts = vim.tbl_deep_extend("force", { mode = mode, prompt = prompt_text }, prompt_obj)
+        M.exec(final_opts)
+        return
+    end
+
+    -- Si no se pasa argumento, mostrar un menú de selección
     local promptKeys = {}
-    for key, _ in pairs(M.prompts) do
-        table.insert(promptKeys, key)
+    for k, _ in pairs(prompts) do
+        table.insert(promptKeys, k)
     end
     table.sort(promptKeys)
 
     vim.ui.select(promptKeys, {
         prompt = "Selecciona un Prompt:",
         format_item = function(item)
+            -- solo hace un split para mejorar la legibilidad
             return table.concat(vim.split(item, "_"), " ")
         end,
     }, function(selected_prompt)
         if not selected_prompt then
-            cb(nil)
-            return
-        end
-        cb(selected_prompt)
-    end)
-end
-
-vim.api.nvim_create_user_command("Gen", function(arg)
-    local mode
-    if arg.range == 0 then
-        mode = "n"
-    else
-        mode = "v"
-    end
-
-    if arg.args ~= "" then
-        local prompt = M.prompts[arg.args]
-        if not prompt then
-            print("Invalid prompt '" .. arg.args .. "'")
             return
         end
 
-        -- Extract the prompt text based on the configured language
+        local prompt_obj = prompts[selected_prompt]
+        if not prompt_obj then
+            print("Prompt '" .. selected_prompt .. "' not found.")
+            return
+        end
+
         local prompt_text
-        if type(prompt.prompt) == "table" then
-            prompt_text = prompt.prompt[M.language]
+        if type(prompt_obj.prompt) == "table" then
+            prompt_text = prompt_obj.prompt[M.config.language]
             if not prompt_text then
-                print("No prompt defined for language '" .. M.language .. "' in '" .. arg.args .. "'.")
+                print("No prompt for language '" .. M.config.language .. "' in '" .. selected_prompt .. "'.")
                 return
             end
         else
-            prompt_text = prompt.prompt
+            prompt_text = prompt_obj.prompt
         end
 
-        -- Combine options and assign the extracted prompt
-        local p = vim.tbl_deep_extend("force", { mode = mode, prompt = prompt_text }, prompt)
-        return M.exec(p)
-    end
-
-    select_prompt(function(item)
-        if not item then
-            return
-        end
-        local prompt = M.prompts[item]
-        if not prompt then
-            print("Prompt '" .. item .. "' not found.")
-            return
-        end
-
-        -- Extract the prompt text based on the configured language
-        local prompt_text
-        if type(prompt.prompt) == "table" then
-            prompt_text = prompt.prompt[M.language]
-            if not prompt_text then
-                print("No prompt defined for language '" .. M.language .. "' in '" .. item .. "'.")
-                return
-            end
-        else
-            prompt_text = prompt.prompt
-        end
-
-        -- Combine options and assign the extracted prompt
-        local p = vim.tbl_deep_extend("force", { mode = mode, prompt = prompt_text }, prompt)
-        M.exec(p)
+        local final_opts = vim.tbl_deep_extend("force", { mode = mode, prompt = prompt_text }, prompt_obj)
+        M.exec(final_opts)
     end)
 end, {
     range = true,
     nargs = "?",
     complete = function(ArgLead)
-        local promptKeys = {}
-        for key, _ in pairs(M.prompts) do
+        local completions = {}
+        for key, _ in pairs(prompts) do
             if key:lower():match("^" .. ArgLead:lower()) then
-                table.insert(promptKeys, key)
+                table.insert(completions, key)
             end
         end
-        table.sort(promptKeys)
-        return promptKeys
+        table.sort(completions)
+        return completions
     end,
 })
 
-function Process_response(str, json_response)
-    if string.len(str) == 0 then
-        return
-    end
-    local text
-
-    if json_response then
-        -- llamacpp response string -- 'data: {"content": "hello", .... }' -- remove 'data: ' prefix, before json_decode
-        if string.sub(str, 1, 6) == "data: " then
-            str = string.gsub(str, "data: ", "", 1)
-        end
-        local success, result = pcall(function()
-            return vim.fn.json_decode(str)
-        end)
-
-        if success then
-            if result.message and result.message.content then -- ollama chat endpoint
-                local content = result.message.content
-                text = content
-
-                globals.context = globals.context or {}
-                globals.context_buffer = globals.context_buffer or ""
-                globals.context_buffer = globals.context_buffer .. content
-
-                -- When the message sequence is complete, add it to the context
-                if result.done then
-                    table.insert(globals.context, {
-                        role = "assistant",
-                        content = globals.context_buffer,
-                    })
-                    -- Clear the buffer as we're done with this sequence of messages
-                    globals.context_buffer = ""
-                end
-            elseif result.choices then -- groq chat endpoint
-                local choice = result.choices[1]
-                local content = choice.delta.content
-                text = content
-
-                if content ~= nil then
-                    globals.context = globals.context or {}
-                    globals.context_buffer = globals.context_buffer or ""
-                    globals.context_buffer = globals.context_buffer .. content
-                end
-
-                -- When the message sequence is complete, add it to the context
-                if choice.finish_reason == "stop" then
-                    table.insert(globals.context, {
-                        role = "assistant",
-                        content = globals.context_buffer,
-                    })
-                    -- Clear the buffer as we're done with this sequence of messages
-                    globals.context_buffer = ""
-                end
-            elseif result.content then -- llamacpp version
-                text = result.content
-                if result.content then
-                    globals.context = result.content
-                end
-            elseif result.response then -- ollama generate endpoint
-                text = result.response
-                if result.context then
-                    globals.context = result.context
-                end
-            end
-        else
-            write_to_buffer({ "", "====== ERROR ====", str, "-------------", "" })
-            vim.fn.jobstop(globals.job_id)
-        end
-    else
-        text = str
-    end
-
-    if text == nil then
-        return
-    end
-
-    globals.result_string = globals.result_string .. text
-    local lines = vim.split(text, "\n")
-    write_to_buffer(lines)
-end
-
-M.select_model = function()
-    local models = M.list_models(M)
+-------------------------------------------------------------------
+-- CAMBIAR MODELO
+-------------------------------------------------------------------
+function M.select_model()
+    local models = M.config.list_models(M.config)
     vim.ui.select(models, { prompt = "Model:" }, function(item)
-        if item ~= nil then
+        if item then
             print("Model set to " .. item)
-            M.model = item
+            M.config.model = item
         end
     end)
 end
