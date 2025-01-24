@@ -1,8 +1,12 @@
 return {
     Generate = {
         prompt = {
-            en = [[Generate the following code. If additional explanations are needed, include them as comments in the syntax of $filetype. Output only the code: $input]],
-            es = [[Genera el siguiente código. Si se necesitan explicaciones adicionales, inclúyelas como comentarios usando la sintaxis de $filetype. Muestra solo el código: $input]],
+            en = [[Generate the following code. Include all explanations as inline comments using $filetype syntax.
+Do not include any additional text or descriptions outside the code:
+$input]],
+            es = [[Genera el siguiente código. Incluye todas las explicaciones como comentarios dentro del código usando la sintaxis de $filetype.
+No incluyas texto ni descripciones adicionales fuera del código:
+$input]],
         },
         replace = true,
     },
