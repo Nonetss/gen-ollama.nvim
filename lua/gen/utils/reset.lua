@@ -1,4 +1,4 @@
-local globals = {}
+local globals = require("gen.utils.globals")
 
 local function reset(keep_selection)
     if not keep_selection then

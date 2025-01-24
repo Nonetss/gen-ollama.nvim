@@ -1,6 +1,6 @@
 local reset = require("gen.utils.reset")
 local trim_table = require("gen.utils.trim_table")
-local globals = {}
+local globals = require("gen.utils.globals")
 
 local function close_window(opts)
     local lines = {}

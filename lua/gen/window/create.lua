@@ -1,4 +1,4 @@
-local globals = {}
+local globals = require("gen.utils.globals")
 local close_window = require("gen.window.close")
 local get_window_options = require("gen.window.get")
 local default_options = require("gen.utils.default_options")

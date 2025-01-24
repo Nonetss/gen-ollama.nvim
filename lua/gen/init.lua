@@ -5,7 +5,7 @@ local prompts = require("gen.prompts")
 local M = {}
 local default_options = require("gen.utils.default_options")
 
-local globals = {}
+local globals = require("gen.utils.globals")
 reset()
 
 for k, v in pairs(default_options) do
