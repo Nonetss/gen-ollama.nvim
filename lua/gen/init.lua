@@ -289,6 +289,105 @@ end, {
 })
 
 -------------------------------------------------------------------
+-- COMANDO USER: TGen
+-------------------------------------------------------------------
+vim.api.nvim_create_user_command("TGen", function(arg)
+    -- Al igual que Gen, detectamos si hay selección
+    local mode = (arg.range == 0) and "n" or "v"
+
+    -- Guardar modelo actual temporalmente
+    local old_model = M.config.model
+
+    -- Cambiamos a nuestro modelo "pensante"
+    M.config.model = "thinking_model"
+
+    if arg.args ~= "" then
+        -- Se pasa prompt como argumento
+        local prompt_key = arg.args
+        local prompt_obj = prompts[prompt_key]
+        if not prompt_obj then
+            print("Invalid prompt '" .. prompt_key .. "'")
+            -- restauramos el modelo original
+            M.config.model = old_model
+            return
+        end
+
+        local prompt_text
+        if type(prompt_obj.prompt) == "table" then
+            prompt_text = prompt_obj.prompt[M.config.language]
+            if not prompt_text then
+                print("No prompt for language '" .. M.config.language .. "' in '" .. prompt_key .. "'.")
+                -- restauramos el modelo original
+                M.config.model = old_model
+                return
+            end
+        else
+            prompt_text = prompt_obj.prompt
+        end
+
+        local final_opts = vim.tbl_deep_extend("force", { mode = mode, prompt = prompt_text }, prompt_obj)
+        M.exec(final_opts)
+    else
+        -- Menú de selección si no se pasa prompt
+        local promptKeys = {}
+        for k, _ in pairs(prompts) do
+            table.insert(promptKeys, k)
+        end
+        table.sort(promptKeys)
+
+        vim.ui.select(promptKeys, {
+            prompt = "Selecciona un Prompt (TGen):",
+            format_item = function(item)
+                return table.concat(vim.split(item, "_"), " ")
+            end,
+        }, function(selected_prompt)
+            if not selected_prompt then
+                M.config.model = old_model
+                return
+            end
+
+            local prompt_obj = prompts[selected_prompt]
+            if not prompt_obj then
+                print("Prompt '" .. selected_prompt .. "' not found.")
+                M.config.model = old_model
+                return
+            end
+
+            local prompt_text
+            if type(prompt_obj.prompt) == "table" then
+                prompt_text = prompt_obj.prompt[M.config.language]
+                if not prompt_text then
+                    print("No prompt for language '" .. M.config.language .. "' in '" .. selected_prompt .. "'.")
+                    M.config.model = old_model
+                    return
+                end
+            else
+                prompt_text = prompt_obj.prompt
+            end
+
+            local final_opts = vim.tbl_deep_extend("force", { mode = mode, prompt = prompt_text }, prompt_obj)
+            M.exec(final_opts)
+        end)
+    end
+
+    -- Finalmente, restauramos el modelo original para no afectar a "Gen"
+    M.config.model = old_model
+end, {
+    range = true,
+    nargs = "?",
+    complete = function(ArgLead)
+        local completions = {}
+        for key, _ in pairs(prompts) do
+            if key:lower():match("^" .. ArgLead:lower()) then
+                table.insert(completions, key)
+            end
+        end
+        table.sort(completions)
+        return completions
+    end,
+})
+
+-------------------------------------------------------------------
 -- CAMBIAR MODELO
 -------------------------------------------------------------------
 function M.select_model()

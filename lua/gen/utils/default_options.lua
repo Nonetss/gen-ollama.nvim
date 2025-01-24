@@ -1,5 +1,6 @@
 local default_options = {
     model = "mistral",
+    thinking_model = "deepseek-r1",
     host = "localhost",
     port = "11434",
     file = false,
