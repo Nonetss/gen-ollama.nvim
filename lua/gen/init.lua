@@ -299,7 +299,7 @@ vim.api.nvim_create_user_command("TGen", function(arg)
     local old_model = M.config.model
 
     -- Cambiamos a nuestro modelo "pensante"
-    M.config.model = "thinking_model"
+    M.config.model = M.config.thinking_model
 
     if arg.args ~= "" then
         -- Se pasa prompt como argumento
