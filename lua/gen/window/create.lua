@@ -1,8 +1,19 @@
 local globals = {}
 local close_window = require("gen.window.close")
 local get_window_options = require("gen.window.get")
+local default_options = require("gen.utils.default_options")
 
 local M = {}
+
+for k, v in pairs(default_options) do
+    M[k] = v
+end
+
+M.setup = function(opts)
+    for k, v in pairs(opts) do
+        M[k] = v
+    end
+end
 
 local function create_window(cmd, opts)
     local function setup_window()
